@@ -3,7 +3,6 @@ package trees.fineGrained
 import kotlinx.coroutines.sync.Mutex
 import trees.BSNode
 import trees.BSTree
-import trees.Tree
 
 
 class FineGrainedBinaryTree<T : Comparable<T>> : BSTree<T>() {
@@ -11,28 +10,33 @@ class FineGrainedBinaryTree<T : Comparable<T>> : BSTree<T>() {
     private val mutex = Mutex()
     override var root: BSNode<T>? = null
 
-    suspend fun helperContains(data: T): Pair<BSNode<T>?, BSNode<T>?> {
-        suspend fun recContains(currentNode: BSNode<T>): Pair<BSNode<T>?, BSNode<T>?> {
-            return if ((data == currentNode.data)) {
-                currentNode.unlock()
-                Pair(currentNode.parent, currentNode)
-            } else if ((data < currentNode.data) and (currentNode.left != null)) {
-                currentNode.left!!.lock()
-                currentNode.unlock()
-                recContains(currentNode.left!!)
-            } else if ((data > currentNode.data) and (currentNode.right != null)) {
-                currentNode.right!!.lock()
-                currentNode.unlock()
-                recContains(currentNode.right!!)
-            } else {
-                currentNode.unlock()
-                Pair(currentNode, null)
-            }
+    private suspend fun recContains(data: T, currentNode: BSNode<T>): Pair<BSNode<T>?, BSNode<T>?> {
+        return if ((data == currentNode.data)) {
+            currentNode.unlock()
+            Pair(currentNode.parent, currentNode)
+        } else if ((data < currentNode.data) and (currentNode.left != null)) {
+            currentNode.left!!.lock()
+            currentNode.unlock()
+            recContains(data, currentNode.left!!)
+        } else if ((data > currentNode.data) and (currentNode.right != null)) {
+            currentNode.right!!.lock()
+            currentNode.unlock()
+            recContains(data, currentNode.right!!)
+        } else {
+            currentNode.unlock()
+            Pair(currentNode, null)
         }
+    }
+
+    suspend fun helperContains(data: T): Pair<BSNode<T>?, BSNode<T>?> {
+        mutex.lock()
         return if (root == null) {
+            mutex.unlock()
             Pair(null, null)
         } else {
-            recContains(root!!)
+            root!!.lock()
+            mutex.unlock()
+            recContains(data, root!!)
         }
     }
 
@@ -40,32 +44,33 @@ class FineGrainedBinaryTree<T : Comparable<T>> : BSTree<T>() {
         if (root?.data == data) {
             return true
         }
-        mutex.lock()
-        root?.lock()
-        return (helperContains(data).second?.data == data).also { mutex.unlock() }
+        return (helperContains(data).second?.data == data)
     }
 
     override suspend fun get(data: T): T? {
-        mutex.lock()
-        root?.lock()
-        return helperContains(data).second?.data.also { mutex.unlock() }
+        return helperContains(data).second?.data
     }
 
     override suspend fun add(data: T) {
         mutex.lock()
-        root?.lock()
-        val parent = helperContains(data).first
-        if (parent == null) {
+        if (root == null) {
             root = BSNode(data)
-        } else {
+            mutex.unlock()
+            return
+        }
+        root!!.lock()
+        mutex.unlock()
+        val (parent, cur) = recContains(data, root!!)
+        if (parent != null) {
             val node = BSNode(data)
-            node.parent = parent
-            if (parent.data < data) {
-                parent.right = node
-            } else {
+            if (parent.data > data) {
                 parent.left = node
+                node.parent = parent
+            } else {
+                parent.right = node
+                node.parent = parent
             }
-        }.also { mutex.unlock() }
+        }
     }
 
     override suspend fun delete(data: T) {
@@ -98,26 +103,31 @@ class FineGrainedBinaryTree<T : Comparable<T>> : BSTree<T>() {
         }
 
 
-        suspend fun deleteNode(node: BSNode<T>?) {
-            if (node!!.left == null && node.right == null) {
+        suspend fun deleteNode(node: BSNode<T>) {
+            if (node.left == null && node.right == null) {
                 replaceNode(node, null)
             } else if (node.left == null || node.right == null) {
                 replaceNode(node, if (node.left == null) node.right else node.left)
             } else {
-                val successor = findRightSuccessor(node)
+                val successor = findRightSuccessor(node.left!!)
                 node.data = successor.data
                 deleteNode(successor)
             }
         }
 
         mutex.lock()
-        if (root == null) {
+        if (root?.data == data) {
+            deleteNode(root!!)
             mutex.unlock()
-        } else {
-            root!!.lock()
-            mutex.unlock()
-            deleteNode(helperContains(data).second)
+            return
         }
+        mutex.unlock()
+        root?.lock()
+        val node = recContains(data, root!!).second ?: return
+        if (node == root) {
+            deleteNode(node)
+        }
+        deleteNode(node)
     }
 }
 
