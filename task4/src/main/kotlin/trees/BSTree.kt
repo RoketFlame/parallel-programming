@@ -99,8 +99,8 @@ open class BSTree<T : Comparable<T>> : Tree<T> {
     open suspend fun preOrder(): List<BSNode<T>> {
         val result = mutableListOf<BSNode<T>>()
         fun walk(node: BSNode<T>, lst: MutableList<BSNode<T>>) {
-            lst.add(node)
             node.left?.let { walk(it, lst) }
+            lst.add(node)
             node.right?.let { walk(it, lst) }
         }
         if (root == null) return result
